@@ -1,0 +1,31 @@
+project('xt_sphere', 'cpp', 'cython',
+  version : '0.1',
+  default_options : ['cpp_std=c++20', 'optimization=3'])
+
+py = import('python').find_installation(pure: false)
+py_dep = py.dependency()
+
+# --- 1. Get NumPy Path ---
+numpy_inc_path = run_command(py, [
+  '-c', 'import numpy; print(numpy.get_include())'
+], check: true).stdout().strip()
+
+# --- 2. The Extension Module ---
+py.extension_module(
+  'sphere_ops',
+  sources: ['src/sphere_ops.pyx'],
+  cpp_args: [
+    '-I' + numpy_inc_path,        # Keep NumPy here to avoid the absolute path error
+    '-I/usr/local/include',       # Standard system path is fine here
+    '-march=native',
+    '-ffast-math',
+    '-D_GNU_SOURCE'               # Keep this for the atomic/std library fix
+  ],
+  include_directories: [
+    include_directories('src')    # Relative project paths belong here
+  ],
+  dependencies: [py_dep],
+  cython_args: ['--cplus'],
+  override_options: ['cython_language=cpp'],
+  install: true
+)

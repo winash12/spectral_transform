@@ -1,0 +1,3 @@
+setenv PYTHONPATH ${PYTHONPATH}:`pwd`/builddir
+echo $PYTHONPATH
+python3 -c "import sphere_ops; print('Success!')"

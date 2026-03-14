@@ -1,0 +1,72 @@
+import numpy as np
+cimport numpy as cnp
+from libcpp.complex cimport complex
+
+def get_gradient(cnp.ndarray[cnp.complex128_t, ndim=2] coeffs, double radius):
+    if not coeffs.flags['C_CONTIGUOUS']:
+        coeffs = np.ascontiguousarray(coeffs)
+
+    cdef size_t rows = coeffs.shape[0]
+    cdef size_t cols = coeffs.shape[1]
+
+    # Pre-allocate output arrays in Python
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] res_z = np.zeros((rows, cols), dtype=np.complex128)
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] res_m = np.zeros((rows, cols), dtype=np.complex128)
+
+    # Call C++ to fill the arrays
+    compute_grad(<complex[double]*>coeffs.data, rows, cols, radius, 
+                 <complex[double]*>res_z.data, 
+                 <complex[double]*>res_m.data)
+    
+    return res_z, res_m
+
+def grid_to_zonal_coeffs(cnp.ndarray[cnp.float64_t, ndim=2] grid):
+    if not grid.flags['C_CONTIGUOUS']:
+        grid = np.ascontiguousarray(grid)
+
+    cdef int nlat = grid.shape[0]
+    cdef int nlon = grid.shape[1]
+    cdef int n_complex = nlon // 2 + 1
+
+    # Allocate complex output: 73 latitudes x 73 complex Fourier coeffs
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] spec = np.zeros((nlat, n_complex), dtype=np.complex128)
+
+    zonal_forward_fft(<double*>grid.data, <complex[double]*>spec.data, nlat, nlon)
+    
+    return spec
+
+def to_spectral(cnp.ndarray[cnp.float64_t, ndim=2] grid):
+    """
+    Transforms a 73x144 grid into 73x73 Spherical Harmonic coefficients.
+    """
+    if not grid.flags['C_CONTIGUOUS']:
+        grid = np.ascontiguousarray(grid, dtype=np.float64)
+
+    cdef int nlat = grid.shape[0]
+    cdef int nlon = grid.shape[1]
+    cdef int n_m = nlon // 2 + 1
+    cdef int n_l = nlat  # Standard square truncation
+
+    # 1. Allocate intermediate Zonal Fourier coefficients
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] zonal = np.zeros((nlat, n_m), dtype=np.complex128)
+    zonal_forward_fft(<double*>grid.data, <complex[double]*>zonal.data, nlat, nlon)
+
+    # 2. Allocate final Spherical Harmonic coefficients
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] sh_coeffs = np.zeros((n_l, n_m), dtype=np.complex128)
+    meridional_forward_legendre(<complex[double]*>zonal.data, <complex[double]*>sh_coeffs.data, nlat, n_l, n_m)
+
+    return sh_coeffs
+
+def to_grid(cnp.ndarray[cnp.complex128_t, ndim=2] sh_coeffs, int nlat, int nlon):
+    cdef int n_l = sh_coeffs.shape[0]
+    cdef int n_m = sh_coeffs.shape[1]
+
+    # 1. Inverse Legendre
+    cdef cnp.ndarray[cnp.complex128_t, ndim=2] zonal = np.zeros((nlat, n_m), dtype=np.complex128)
+    meridional_inverse_legendre(<complex[double]*>sh_coeffs.data, <complex[double]*>zonal.data, nlat, n_l, n_m)
+
+    # 2. Inverse FFT
+    cdef cnp.ndarray[cnp.float64_t, ndim=2] grid = np.zeros((nlat, nlon), dtype=np.float64)
+    zonal_inverse_fft(<complex[double]*>zonal.data, <double*>grid.data, nlat, nlon)
+
+    return grid
